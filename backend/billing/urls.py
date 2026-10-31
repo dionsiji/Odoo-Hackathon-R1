@@ -35,6 +35,7 @@ from .views2 import (
     CustomerCSVImportView,
     ProductCSVImportView,
     GlobalSearchView,
+    DatabaseBackupView,
 )
 
 urlpatterns = [
@@ -90,4 +91,7 @@ urlpatterns = [
 
     # ── Global Search ────────────────────────────────────────────────────────
     path("search/", GlobalSearchView.as_view(), name="global-search"),
+
+    # ── Database Backup ──────────────────────────────────────────────────────
+    path("backups/create/", DatabaseBackupView.as_view(), name="backup-create"),
 ]
