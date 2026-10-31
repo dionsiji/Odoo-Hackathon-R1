@@ -34,6 +34,7 @@ import CustomerPayments from './pages/customer/CustomerPayments';
 import CustomerQuotations from './pages/customer/CustomerQuotations';
 import CustomerPlans from './pages/customer/CustomerPlans';
 import CustomerProfile from './pages/customer/CustomerProfile';
+import CustomerNotifications from './pages/customer/CustomerNotifications';
 
 export default function App() {
   return (
@@ -106,6 +107,7 @@ export default function App() {
             <Route path="quotations" element={<CustomerQuotations />} />
             <Route path="plans" element={<CustomerPlans />} />
             <Route path="profile" element={<CustomerProfile />} />
+            <Route path="notifications" element={<CustomerNotifications />} />
           </Route>
 
           {/* Catch-all */}
