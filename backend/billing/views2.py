@@ -320,6 +320,7 @@ class AnalyticsRevenueView(APIView):
     """
     GET /api/v1/analytics/revenue/?from=YYYY-MM-DD&to=YYYY-MM-DD
     Revenue breakdown by date range (based on completed payments).
+    Returns by_date and by_payment_method dicts for frontend charts.
     """
     permission_classes = [IsAdminOrStaff]
 
@@ -333,15 +334,52 @@ class AnalyticsRevenueView(APIView):
             qs = qs.filter(paid_at__date__lte=parse_date(to_str))
 
         total = qs.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        by_method = list(
+
+        # By payment method — as dict for frontend pie/bar chart
+        by_method_qs = list(
             qs.values("payment_method").annotate(total=Sum("amount"), count=Count("id"))
         )
+        by_payment_method_dict = {
+            r["payment_method"]: str(r["total"]) for r in by_method_qs
+        }
+        # Also list format for analytics page
+        by_method_list = [
+            {"method": r["payment_method"], "total": str(r["total"]), "count": r["count"]}
+            for r in by_method_qs
+        ]
+
+        # By date — daily aggregation for area chart
+        from django.db.models.functions import TruncDate
+        by_date_qs = list(
+            qs.annotate(day=TruncDate("paid_at"))
+            .values("day")
+            .annotate(total=Sum("amount"))
+            .order_by("day")
+        )
+        by_date_dict = {
+            str(r["day"]): str(r["total"]) for r in by_date_qs
+        }
+
+        # Outstanding invoices for the period
+        invoice_qs = Invoice.objects.all()
+        if from_str:
+            invoice_qs = invoice_qs.filter(issue_date__gte=parse_date(from_str))
+        if to_str:
+            invoice_qs = invoice_qs.filter(issue_date__lte=parse_date(to_str))
+
+        outstanding = invoice_qs.filter(
+            status__in=[Invoice.Status.ISSUED, Invoice.Status.PARTIALLY_PAID, Invoice.Status.OVERDUE]
+        ).aggregate(total=Sum("amount_due"))["total"] or Decimal("0.00")
+
+        overdue_count = invoice_qs.filter(status=Invoice.Status.OVERDUE).count()
+
         return Response({
             "total_collected": str(total),
-            "by_payment_method": [
-                {"method": r["payment_method"], "total": str(r["total"]), "count": r["count"]}
-                for r in by_method
-            ],
+            "outstanding": str(outstanding),
+            "overdue_count": overdue_count,
+            "by_payment_method": by_payment_method_dict,
+            "by_payment_method_list": by_method_list,
+            "by_date": by_date_dict,
             "filters": {"from": from_str, "to": to_str},
         })
 
@@ -820,3 +858,64 @@ class GlobalSearchView(APIView):
             ]
 
         return Response({"query": q, "results": results})
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DATABASE BACKUP / EXPORT (TIER 2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class DatabaseBackupView(APIView):
+    """
+    POST /api/v1/backups/create/ or GET /api/v1/backups/create/
+    Creates and downloads a consistent SQLite backup.
+    Admin only.
+    """
+    permission_classes = [IsAdminOrStaff]
+
+    def post(self, request):
+        return self._create_backup(request)
+
+    def get(self, request):
+        return self._create_backup(request)
+
+    def _create_backup(self, request):
+        from django.conf import settings
+        import shutil
+        import os
+        import sqlite3
+
+        db_path = settings.DATABASES['default']['NAME']
+        if not os.path.exists(db_path):
+            return Response({"error": "Database file not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Consistent SQLite backup using sqlite3.Connection.backup
+        backup_buffer = io.BytesIO()
+        source_conn = sqlite3.connect(db_path)
+        # Temp in-memory or file backup
+        timestamp_str = timezone.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"brightloop_backup_{timestamp_str}.sqlite3"
+
+        # Safe atomic vacuum/backup into bytes
+        mem_db = sqlite3.connect(":memory:")
+        source_conn.backup(mem_db)
+        source_conn.close()
+
+        # Write memory DB to buffer
+        for line in mem_db.iterdump():
+            backup_buffer.write(f"{line}\n".encode("utf-8"))
+        mem_db.close()
+
+        backup_buffer.seek(0)
+
+        ActivityLog.log(
+            actor=request.user,
+            action="DATABASE_BACKUP_CREATED",
+            object_type="System",
+            object_id="0",
+            object_repr="SQLite Database Backup",
+            metadata={"filename": backup_filename}
+        )
+
+        response = HttpResponse(backup_buffer.getvalue(), content_type="application/x-sqlite3")
+        response["Content-Disposition"] = f'attachment; filename="{backup_filename}.sql"'
+        return response
