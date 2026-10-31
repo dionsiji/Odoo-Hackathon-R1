@@ -37,11 +37,13 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt",
     "corsheaders",
     # Local apps
+    "core",
     "accounts",
     "customers",
     "catalog",
     "quotations",
     "subscriptions",
+    "billing",
 ]
 
 MIDDLEWARE = [

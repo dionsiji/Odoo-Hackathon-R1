@@ -1,4 +1,4 @@
-# Brightloop – API Contract (Modules 1 & 2)
+# Brightloop – API Contract (Modules 1, 2 & 3 Complete)
 
 > Base URL: `http://localhost:8000`  
 > API prefix: `/api/v1/`  
@@ -322,3 +322,232 @@ Retrieve subscription with nested subscription lines. Accessible to owner Custom
    ▼                            ▼                   ▼
 [CLOSED] ◄───────────────────[CLOSED] ◄──────────[CLOSED]
 ```
+
+### Invoice Lifecycle
+```
+[DRAFT] ────(issue)────► [ISSUED] ────(past due date)────► [OVERDUE]
+   │                        │                                 │
+   ├────(cancel)──► [CANCELLED] ├────(void if unpaid)──► [VOID] ◄─┘
+   │
+   ▼
+[DELETE] (allowed while DRAFT only)
+```
+
+---
+
+## 8. Billing, Invoices, Tax Rates & Discounts (Module 3 Phase 1)
+
+### `GET /api/v1/tax-rates/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff see all; Customer sees active tax rates.
+
+### `POST /api/v1/tax-rates/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only
+- **Payload:** `{"name": "VAT 10%", "code": "VAT10", "rate": "10.00", "description": "10% VAT"}`
+
+### `GET /api/v1/discounts/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff see all; Customer sees active discounts.
+
+### `POST /api/v1/discounts/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only
+- **Payload:**
+```json
+{
+  "code": "PROMO20",
+  "discount_type": "PERCENTAGE",
+  "amount": "20.00",
+  "min_order_amount": "50.00",
+  "valid_to": "2026-12-31"
+}
+```
+
+### `GET /api/v1/invoices/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff see all; Customer sees own invoices only. Evaluates overdue status lazily on retrieval.
+
+### `POST /api/v1/invoices/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only
+- **Payload:**
+```json
+{
+  "customer": 1,
+  "due_date": "2026-11-30",
+  "tax_rate": 1,
+  "discount": 1,
+  "lines": [
+    {
+      "product": 1,
+      "variant": 1,
+      "quantity": 2,
+      "unit_price": "150.00"
+    }
+  ]
+}
+```
+*Note: Subtotal, tax_amount, discount_amount, total_amount, amount_due are computed strictly server-side.*
+
+### `GET /api/v1/invoices/{id}/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff or Customer owner.
+
+### `PATCH /api/v1/invoices/{id}/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Only editable when `status == "DRAFT"`.
+
+### `DELETE /api/v1/invoices/{id}/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Only deletable when `status == "DRAFT"`.
+
+### `POST /api/v1/invoices/{id}/issue/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Transitions `DRAFT` to `ISSUED` (or `OVERDUE` if past `due_date`). Requires at least 1 line item.
+
+### `POST /api/v1/invoices/{id}/void/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Transitions `DRAFT`, `ISSUED`, or `OVERDUE` to `VOID`. Only allowed if `amount_paid == 0.00`.
+
+### `POST /api/v1/invoices/{id}/cancel/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Transitions `DRAFT` to `CANCELLED`.
+
+### `POST /api/v1/quotations/{id}/generate-invoice/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Converts an `ACCEPTED` quotation into a `DRAFT` invoice. Copies all snapshot items. Enforces duplicate prevention.
+
+### `POST /api/v1/subscriptions/{id}/generate-invoice/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Generates a recurring `DRAFT` invoice from an `ACTIVE` subscription. Copies line items with locked unit prices. Enforces billing-window idempotency.
+
+### `GET /api/v1/invoices/{id}/pdf/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff or Customer owner.
+- **Response:** PDF binary attachment (`invoice_{number}.pdf`) styled with Brightloop branding, item lines, financial summaries, and payment status.
+
+---
+
+## 9. Payments
+
+### `GET /api/v1/payments/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff see all; Customer sees own payments.
+
+### `POST /api/v1/payments/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only.
+- **Payload:**
+```json
+{
+  "invoice": 1,
+  "amount": "150.00",
+  "payment_method": "BANK_TRANSFER",
+  "notes": "Wire confirmation #12345"
+}
+```
+*Note: Overpayment is strictly prevented. Updates invoice amount_paid, amount_due, and triggers transition to PAID or PARTIALLY_PAID.*
+
+### `GET /api/v1/payments/{id}/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff or Customer owner.
+
+### `POST /api/v1/payments/{id}/refund/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only.
+- **Payload:** `{"notes": "Customer requested full refund"}`
+- **Behavior:** Reverses invoice balances and marks payment status `REFUNDED`.
+
+---
+
+## 10. Recurring Billing Automation
+
+### `POST /api/v1/billing/run/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only.
+- **Payload (optional):** `{"due_in_days": 14}`
+- **Behavior:** Evaluates active subscriptions where `next_billing_date <= today`, creates `DRAFT` recurring invoices, and advances `next_billing_date`. Prevents duplicate cycle generation.
+- **CLI Alternative:** `python manage.py generate_recurring_invoices [--due-in-days 14] [--dry-run]`
+
+---
+
+## 11. Analytics & Reporting
+
+### `GET /api/v1/analytics/overview/`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only.
+- **Response:**
+```json
+{
+  "total_revenue_collected": "5000.00",
+  "mrr": "1200.00",
+  "arr": "14400.00",
+  "subscriptions": {"active": 10, "paused": 1, "draft": 2, "closed": 3, "total": 16},
+  "invoices": {"draft": 2, "issued": 5, "paid": 12, "partially_paid": 1, "overdue": 1, "void": 0, "cancelled": 0, "total": 21},
+  "outstanding_receivables": "350.00"
+}
+```
+
+### `GET /api/v1/analytics/revenue/?from=YYYY-MM-DD&to=YYYY-MM-DD`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only.
+- **Response:** Revenue breakdown by date window and payment methods.
+
+---
+
+## 12. Activity & Audit Logs
+
+### `GET /api/v1/activity-logs/?object_type=Invoice&action=PAYMENT_RECORDED`
+- **Auth required:** Yes
+- **Permissions:** Admin/Staff only. Returns timeline of actor actions, object types, and metadata.
+
+---
+
+## 13. Notifications
+
+### `GET /api/v1/notifications/?unread=1`
+- **Auth required:** Yes
+- **Permissions:** Authenticated user (isolated to own notifications).
+
+### `POST /api/v1/notifications/{id}/mark-read/`
+- **Auth required:** Yes
+- **Permissions:** Authenticated user owner.
+
+### `POST /api/v1/notifications/mark-all-read/`
+- **Auth required:** Yes
+- **Permissions:** Authenticated user.
+
+---
+
+## 14. CSV Import & Export
+
+### `GET /api/v1/export/customers.csv`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+
+### `GET /api/v1/export/products.csv`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+
+### `GET /api/v1/export/invoices.csv`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+
+### `GET /api/v1/export/payments.csv`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+
+### `POST /api/v1/import/customers/`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+- **Form Data:** `file` (CSV with headers: `email`, `first_name`, `last_name`, `password`, `company_name`).
+
+### `POST /api/v1/import/products/`
+- **Auth required:** Yes | **Permissions:** Admin/Staff only.
+- **Form Data:** `file` (CSV with headers: `name`, `sku`, `category`).
+
+---
+
+## 15. Global Search
+
+### `GET /api/v1/search/?q={query}&types=customers,products,plans,quotations,subscriptions,invoices`
+- **Auth required:** Yes
+- **Permissions:** Authenticated user. Customers only see their own quotations, subscriptions, invoices, and active catalog items.
+
+

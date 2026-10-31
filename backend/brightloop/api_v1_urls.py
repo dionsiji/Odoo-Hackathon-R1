@@ -24,4 +24,7 @@ urlpatterns = [
 
     # Subscriptions (subscriptions, lines, lifecycle)
     path("", include("subscriptions.urls")),
+
+    # Billing & Financial engine (tax rates, discounts, invoices)
+    path("", include("billing.urls")),
 ]

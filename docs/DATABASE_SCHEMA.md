@@ -1,8 +1,8 @@
-# Brightloop – Database Schema (Module 1 & 2)
+# Brightloop – Database Schema (Modules 1, 2 & 3 Complete)
 
 > Generated: 2026-10-31  
 > Database: SQLite (dev) — Django ORM models  
-> Django apps: `accounts`, `customers`, `catalog`, `quotations`, `subscriptions`
+> Django apps: `accounts`, `customers`, `catalog`, `quotations`, `subscriptions`, `billing`, `core`
 
 ---
 
@@ -199,7 +199,148 @@ Items/recurring lines in a subscription.
 
 ---
 
-## Information for Viswas (Module 3 — Billing, Payments & Invoices)
+## 11. Table: `billing_taxrate`
+
+Tax rate configuration (e.g. VAT 10%, GST 18%).
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `name` | `VARCHAR(100)` | NOT NULL | Tax label (e.g. "VAT 10%") |
+| `code` | `VARCHAR(32)` | UNIQUE, NOT NULL, indexed | Identifier (e.g. "VAT10") |
+| `rate` | `DECIMAL(5, 2)` | NOT NULL, 0.00 to 100.00 | Percentage rate |
+| `description` | `TEXT` | blank allowed | |
+| `is_active` | `BOOLEAN` | NOT NULL, default `TRUE` | |
+| `created_at` | `DATETIME` | NOT NULL, auto-set on create | |
+| `updated_at` | `DATETIME` | NOT NULL, auto-updated | |
+
+---
+
+## 12. Table: `billing_discount`
+
+Promotional discount and coupon codes (percentage or fixed amount).
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `code` | `VARCHAR(32)` | UNIQUE, NOT NULL, indexed | Discount coupon code |
+| `description` | `TEXT` | blank allowed | |
+| `discount_type` | `VARCHAR(20)` | NOT NULL, default `PERCENTAGE` | Choices: `PERCENTAGE`, `FIXED_AMOUNT` |
+| `amount` | `DECIMAL(12, 2)` | NOT NULL, MinValue 0.00 | Percentage (0-100) or flat dollar amount |
+| `min_order_amount` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Minimum order subtotal required |
+| `is_active` | `BOOLEAN` | NOT NULL, default `TRUE` | |
+| `valid_from` | `DATE` | NULL, blank allowed | Effective start date |
+| `valid_to` | `DATE` | NULL, blank allowed | Expiration date |
+| `usage_limit` | `POSITIVE INTEGER` | NULL, blank allowed | Max redemptions allowed |
+| `times_used` | `POSITIVE INTEGER` | NOT NULL, default 0 | Counter |
+| `created_at` | `DATETIME` | NOT NULL, auto-set on create | |
+| `updated_at` | `DATETIME` | NOT NULL, auto-updated | |
+
+---
+
+## 13. Table: `billing_invoice`
+
+Core invoice record for one-off conversions and subscription billing.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `invoice_number` | `VARCHAR(64)` | UNIQUE, NOT NULL, indexed | Format: `INV-YYYYMMDD-XXXXXX` |
+| `customer_id` | `BIGINT` | FK → `customers_customerprofile.id`, PROTECT | Billed customer |
+| `subscription_id` | `BIGINT` | FK → `subscriptions_subscription.id`, SET_NULL, NULL, blank | Recurring subscription link |
+| `quotation_id` | `BIGINT` | FK → `quotations_quotation.id`, SET_NULL, NULL, blank | Converted quotation link |
+| `issue_date` | `DATE` | NOT NULL, default `current_date` | |
+| `due_date` | `DATE` | NOT NULL | Payment deadline |
+| `status` | `VARCHAR(20)` | NOT NULL, default `DRAFT`, indexed | Choices: `DRAFT`, `ISSUED`, `PAID`, `PARTIALLY_PAID`, `OVERDUE`, `VOID`, `CANCELLED` |
+| `subtotal` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Server-calculated sum of lines |
+| `discount_id` | `BIGINT` | FK → `billing_discount.id`, SET_NULL, NULL, blank | Applied coupon |
+| `discount_amount` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Server-calculated discount total |
+| `tax_rate_id` | `BIGINT` | FK → `billing_taxrate.id`, SET_NULL, NULL, blank | Applied tax rate |
+| `tax_amount` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Server-calculated tax total |
+| `total_amount` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Server-calculated final total |
+| `amount_paid` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Sum of recorded payments |
+| `amount_due` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | `total_amount - amount_paid` |
+| `billing_cycle_start` | `DATE` | NULL, blank allowed | Start of recurring service period |
+| `billing_cycle_end` | `DATE` | NULL, blank allowed | End of recurring service period |
+| `notes` | `TEXT` | blank allowed | |
+| `terms` | `TEXT` | blank allowed | |
+| `created_by_id` | `BIGINT` | FK → `accounts_user.id`, PROTECT | |
+| `created_at` | `DATETIME` | NOT NULL, auto-set on create | |
+| `updated_at` | `DATETIME` | NOT NULL, auto-updated | |
+
+---
+
+## 14. Table: `billing_invoiceline`
+
+Line items on an invoice preserving immutable price and description snapshots.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `invoice_id` | `BIGINT` | FK → `billing_invoice.id`, CASCADE | Parent invoice |
+| `product_id` | `BIGINT` | FK → `catalog_product.id`, PROTECT | Product reference |
+| `variant_id` | `BIGINT` | FK → `catalog_productvariant.id`, PROTECT, NULL, blank | Optional variant reference |
+| `plan_id` | `BIGINT` | FK → `catalog_subscriptionplan.id`, PROTECT, NULL, blank | Linked subscription plan reference |
+| `description` | `VARCHAR(255)` | blank allowed | Item description snapshot |
+| `quantity` | `POSITIVE INTEGER` | NOT NULL, default 1, MinValue 1 | |
+| `unit_price` | `DECIMAL(12, 2)` | NOT NULL, MinValue 0.00 | Locked historical unit price snapshot |
+| `line_total` | `DECIMAL(12, 2)` | NOT NULL, default 0.00 | Server-calculated: `quantity * unit_price` |
+
+---
+
+## 15. Table: `billing_payment`
+
+Payment transaction records against invoices.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `transaction_ref` | `VARCHAR(64)` | UNIQUE, NOT NULL, indexed | Format: `PAY-YYYYMMDD-XXXXXX` |
+| `invoice_id` | `BIGINT` | FK → `billing_invoice.id`, PROTECT | Associated invoice |
+| `customer_id` | `BIGINT` | FK → `customers_customerprofile.id`, PROTECT | Paying customer |
+| `amount` | `DECIMAL(12, 2)` | NOT NULL, MinValue 0.01 | Payment amount |
+| `payment_method` | `VARCHAR(20)` | NOT NULL, default `MANUAL` | Choices: `MANUAL`, `BANK_TRANSFER`, `CREDIT_CARD`, `CASH`, `MOCK_GATEWAY` |
+| `status` | `VARCHAR(20)` | NOT NULL, default `COMPLETED`, indexed | Choices: `COMPLETED`, `PENDING`, `FAILED`, `REFUNDED` |
+| `notes` | `TEXT` | blank allowed | Reference notes / refund reasons |
+| `paid_at` | `DATETIME` | NOT NULL, default `now` | Transaction timestamp |
+| `created_by_id` | `BIGINT` | FK → `accounts_user.id`, PROTECT | Staff/admin who recorded payment |
+| `created_at` | `DATETIME` | NOT NULL, auto-set on create | |
+| `updated_at` | `DATETIME` | NOT NULL, auto-updated | |
+
+---
+
+## 16. Table: `core_activitylog`
+
+Audit logging and activity trail for security, compliance, and debugging.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `actor_id` | `BIGINT` | FK → `accounts_user.id`, SET_NULL, NULL, blank | Performing user or System |
+| `action` | `VARCHAR(100)` | NOT NULL, indexed | Action key (e.g. `PAYMENT_RECORDED`, `INVOICE_ISSUED`) |
+| `object_type` | `VARCHAR(50)` | NOT NULL, indexed | Model class name |
+| `object_id` | `VARCHAR(64)` | blank allowed, indexed | Target object primary key |
+| `object_repr` | `VARCHAR(255)` | blank allowed | Human-friendly snapshot representation |
+| `metadata` | `JSON` | default `{}` | Structured event details |
+| `created_at` | `DATETIME` | NOT NULL, default `now`, indexed | Event timestamp |
+
+---
+
+## 17. Table: `core_notification`
+
+In-app notifications for customer users and staff.
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | `BIGINT` | PK, auto-increment | |
+| `recipient_id` | `BIGINT` | FK → `accounts_user.id`, CASCADE | Target user |
+| `notification_type` | `VARCHAR(50)` | NOT NULL, indexed | Event category (e.g. `PAYMENT_RECEIVED`, `SUBSCRIPTION_RENEWED`) |
+| `title` | `VARCHAR(255)` | NOT NULL | Short notification headline |
+| `message` | `TEXT` | NOT NULL | Body text |
+| `is_read` | `BOOLEAN` | NOT NULL, default `FALSE`, indexed | Read receipt |
+| `object_type` | `VARCHAR(50)` | blank allowed | Related model name |
+| `object_id` | `VARCHAR(64)` | blank allowed | Related object ID |
+| `created_at` | `DATETIME` | NOT NULL, default `now`, indexed | Timestamp |
 - **Foreign Keys**: Invoices can reference `subscriptions_subscription.id` and/or `customers_customerprofile.id`.
 - **Financial Precision**: All amounts (`subtotal`, `tax_amount`, `discount_amount`, `total_amount`, `unit_price`, `line_total`) are stored as standard `DecimalField(max_digits=12, decimal_places=2)`. Never use floating-point types.
 - **Source Quotation Link**: `Subscription.quotation` is a unique `OneToOneField`, ensuring an accepted quotation is never converted into multiple subscriptions.
