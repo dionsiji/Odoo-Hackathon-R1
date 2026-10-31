@@ -25,6 +25,17 @@ import AnalyticsPage from './pages/admin/AnalyticsPage';
 import ActivityLogsPage from './pages/admin/ActivityLogsPage';
 import CsvImportPage from './pages/admin/CsvImportPage';
 
+// Customer Portal
+import PortalLayout from './components/portal/PortalLayout';
+import CustomerDashboard from './pages/customer/CustomerDashboard';
+import CustomerSubscriptions from './pages/customer/CustomerSubscriptions';
+import CustomerInvoices from './pages/customer/CustomerInvoices';
+import CustomerPayments from './pages/customer/CustomerPayments';
+import CustomerQuotations from './pages/customer/CustomerQuotations';
+import CustomerPlans from './pages/customer/CustomerPlans';
+import CustomerProfile from './pages/customer/CustomerProfile';
+import CustomerNotifications from './pages/customer/CustomerNotifications';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -78,6 +89,25 @@ export default function App() {
                 </RequireAuth>
               }
             />
+          </Route>
+
+          {/* Customer Portal Protected Routes */}
+          <Route
+            path="/portal"
+            element={
+              <RequireAuth allowedRoles={['CUSTOMER']}>
+                <PortalLayout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<CustomerDashboard />} />
+            <Route path="subscriptions" element={<CustomerSubscriptions />} />
+            <Route path="invoices" element={<CustomerInvoices />} />
+            <Route path="payments" element={<CustomerPayments />} />
+            <Route path="quotations" element={<CustomerQuotations />} />
+            <Route path="plans" element={<CustomerPlans />} />
+            <Route path="profile" element={<CustomerProfile />} />
+            <Route path="notifications" element={<CustomerNotifications />} />
           </Route>
 
           {/* Catch-all */}
