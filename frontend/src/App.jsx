@@ -25,6 +25,12 @@ import AnalyticsPage from './pages/admin/AnalyticsPage';
 import ActivityLogsPage from './pages/admin/ActivityLogsPage';
 import CsvImportPage from './pages/admin/CsvImportPage';
 
+// Customer Portal
+import PortalLayout from './components/portal/PortalLayout';
+import CustomerDashboard from './pages/customer/CustomerDashboard';
+import CustomerSubscriptions from './pages/customer/CustomerSubscriptions';
+import CustomerInvoices from './pages/customer/CustomerInvoices';
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -78,6 +84,20 @@ export default function App() {
                 </RequireAuth>
               }
             />
+          </Route>
+
+          {/* Customer Portal Protected Routes */}
+          <Route
+            path="/portal"
+            element={
+              <RequireAuth allowedRoles={['CUSTOMER']}>
+                <PortalLayout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<CustomerDashboard />} />
+            <Route path="subscriptions" element={<CustomerSubscriptions />} />
+            <Route path="invoices" element={<CustomerInvoices />} />
           </Route>
 
           {/* Catch-all */}
